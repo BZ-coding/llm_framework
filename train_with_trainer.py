@@ -1,5 +1,6 @@
 import os
 import shutil
+import logging
 
 import torch
 import transformers
@@ -17,7 +18,7 @@ DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 
 train_args = get_train_args(
-    epoch=2.0  # 0.1 for test
+    epoch=0.1  # 0.1 for test
 )
 
 lora_args = get_lora_args(
@@ -36,7 +37,8 @@ if os.path.exists(SAVE_PATH):
     os.system(f"rm -rf {SAVE_PATH}")  # 在nfs上shutil.rmtree会报正忙、非空
 os.makedirs(SAVE_PATH, exist_ok=True)
 
-logger = get_logger(log_file=train_args.log_file)
+log_level = logging.INFO
+logger = get_logger(log_level=log_level, logger_log_level=logging.INFO, log_file=train_args.log_file)
 
 tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
 
@@ -46,9 +48,17 @@ generate_and_tokenize_prompt = get_generate_and_tokenize_prompt_fn(tokenizer=tok
                                                                    max_length=train_args.max_length)
 
 data = data["train"].train_test_split(test_size=200, shuffle=True, seed=42)
-data["train"] = data["train"].map(generate_and_tokenize_prompt, remove_columns=data["train"].column_names)
-data["test"] = data["test"].map(generate_and_tokenize_prompt, remove_columns=data["test"].column_names)
+data["train"] = data["train"].map(generate_and_tokenize_prompt, remove_columns=data["train"].column_names, num_proc=2)
+data["test"] = data["test"].map(generate_and_tokenize_prompt, remove_columns=data["test"].column_names, num_proc=2)
 logger.info(data)
+
+data_collator = transformers.DataCollatorForSeq2Seq(
+    tokenizer,
+    return_tensors="pt",
+    padding=True,
+    pad_to_multiple_of=8,
+    # pad_to_multiple_of=ARGS.max_length,
+)
 
 model = LlamaForCausalLM.from_pretrained(
     BASE_MODEL,
@@ -91,9 +101,9 @@ training_arguments = transformers.TrainingArguments(
     bf16=True,
     optim="adamw_torch",
     evaluation_strategy="steps",
-    eval_steps=50,
+    eval_steps=train_args.eval_steps,
     save_strategy="steps",
-    save_steps=50,
+    save_steps=train_args.save_steps,
     output_dir=SAVE_PATH,
     save_total_limit=3,
     load_best_model_at_end=True,
@@ -107,14 +117,6 @@ training_arguments = transformers.TrainingArguments(
     # save_safetensors=True,
 )
 logger.info(training_arguments)
-
-data_collator = transformers.DataCollatorForSeq2Seq(
-    tokenizer,
-    return_tensors="pt",
-    padding=True,
-    pad_to_multiple_of=8,
-    # pad_to_multiple_of=ARGS.max_length, 
-)
 
 # batch = data_collator([data["train"][i] for i in range(1, 3)])
 # print(batch.keys())

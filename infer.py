@@ -7,7 +7,8 @@ from transformers import LlamaForCausalLM, LlamaTokenizer
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/chinese-alpaca-2-7b'
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/llama-2-7B'
 model_path = '/mnt/nfs/zsd_server/models/huggingface/llama-7b-hf_yahma'
-lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save/checkpoint-1400'
+lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save/checkpoint-50'
+# lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 
 # instruction = "你好"
 # instruction = "hello"
@@ -27,7 +28,7 @@ model = LlamaForCausalLM.from_pretrained(model_path,
 model = PeftModel.from_pretrained(model=model,
                                   model_id=lora_path,
                                   device_map='auto',
-                                  use_safetensors=True
+                                  # use_safetensors=True
                                   )
 for n, p in model.named_parameters():
     if p.device.type == "meta":

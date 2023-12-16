@@ -15,6 +15,8 @@ class TrainArgs:
     epoch: float = 2.0
     log_file: str = '../train.log'
     report_to: str = 'tensorboard'
+    save_steps: int = 50
+    eval_steps: int = 50
 
 
 @functools.lru_cache()
