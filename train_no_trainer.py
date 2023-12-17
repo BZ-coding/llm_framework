@@ -60,6 +60,7 @@ accelerator.wait_for_everyone()
 
 tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
 
+# todo: add loss mask
 with accelerator.main_process_first():
     data = load_dataset("json", data_files=DATA_PATH)
 
@@ -183,18 +184,22 @@ for epoch in range(starting_epoch, epoch_):
             lr_scheduler.step()
             optimizer.zero_grad()
 
-        logger.info(f"step {completed_steps}: train_loss: {loss_.item()}")
+        # Checks if the accelerator has performed an optimization step behind the scenes
+        if accelerator.sync_gradients:
+            progress_bar.update(1)
+            completed_steps += 1
+        else:
+            continue  # for accelerator's gradient_accumulation
+
+        lr = lr_scheduler.get_lr()[0]
+        logger.info(f"step:{completed_steps} train_loss:{loss_.item()} learning_rate:{lr}")
         accelerator.log(
             {
                 "train_loss": loss_.item(),
+                "learning_rate": lr,
             },
             step=completed_steps,
         )
-
-        # Checks if the accelerator has performed an optimization step behind the scenes
-        if accelerator.sync_gradients or train_args.world_size == 1:
-            progress_bar.update(1)
-            completed_steps += 1
 
         if completed_steps % train_args.save_steps == 0:
             output_dir = f"step_{completed_steps}"
@@ -204,9 +209,9 @@ for epoch in range(starting_epoch, epoch_):
         if completed_steps % train_args.eval_steps == 0:
             model.eval()
             losses = []
-            for step, batch in enumerate(eval_dataloader):
+            for _, batch_ in enumerate(eval_dataloader):
                 with torch.no_grad():
-                    outputs = model(**batch)
+                    outputs = model(**batch_)
                 loss = outputs.loss
                 losses.append(accelerator.gather_for_metrics(loss.repeat(train_args.micro_batch_size)))
             losses = torch.cat(losses)
