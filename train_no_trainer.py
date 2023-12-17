@@ -169,6 +169,7 @@ logger.info(f"  Total optimization steps = {num_training_steps}")
 progress_bar = tqdm(range(num_training_steps), disable=not accelerator.is_local_main_process)
 completed_steps = 0
 starting_epoch = 0
+mini_batch_loss = 0
 epoch_ = int(train_args.epoch)
 epoch_ = epoch_ + 1 if train_args.epoch > epoch_ else epoch_
 for epoch in range(starting_epoch, epoch_):
@@ -184,6 +185,7 @@ for epoch in range(starting_epoch, epoch_):
             lr_scheduler.step()
             optimizer.zero_grad()
 
+        mini_batch_loss += loss_.item()
         # Checks if the accelerator has performed an optimization step behind the scenes
         if accelerator.sync_gradients:
             progress_bar.update(1)
@@ -192,14 +194,16 @@ for epoch in range(starting_epoch, epoch_):
             continue  # for accelerator's gradient_accumulation
 
         lr = lr_scheduler.get_lr()[0]
-        logger.info(f"step:{completed_steps} train_loss:{loss_.item()} learning_rate:{lr}")
+        mini_batch_loss = mini_batch_loss / train_args.gradient_accumulation_steps
+        logger.info(f"step:{completed_steps} train_loss:{mini_batch_loss} learning_rate:{lr}")
         accelerator.log(
             {
-                "train_loss": loss_.item(),
+                "train_loss": mini_batch_loss,
                 "learning_rate": lr,
             },
             step=completed_steps,
         )
+        mini_batch_loss = 0
 
         if completed_steps % train_args.save_steps == 0:
             output_dir = f"step_{completed_steps}"

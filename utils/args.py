@@ -11,7 +11,7 @@ class TrainArgs:
     gradient_accumulation_steps: int = 64
     world_size: int = 1
     batch_size: int = micro_batch_size * gradient_accumulation_steps * world_size
-    learning_rate: int = 3e-4
+    learning_rate: int = 2e-5
     epoch: float = 2.0
     log_file: str = '../train.log'
     report_to: str = 'tensorboard'
