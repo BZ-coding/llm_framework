@@ -6,7 +6,7 @@ import torch
 import transformers
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
-from transformers import LlamaForCausalLM
+from transformers import AutoModelForCausalLM
 
 from utils.args import get_train_args, get_lora_args
 from utils.data import get_generate_and_tokenize_prompt_fn
@@ -60,7 +60,7 @@ data_collator = transformers.DataCollatorForSeq2Seq(
     # pad_to_multiple_of=ARGS.max_length,
 )
 
-model = LlamaForCausalLM.from_pretrained(
+model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
     # load_in_8bit=True,
     torch_dtype=torch.bfloat16,
