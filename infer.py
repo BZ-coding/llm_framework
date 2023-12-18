@@ -7,8 +7,8 @@ from transformers import LlamaForCausalLM, LlamaTokenizer
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/chinese-alpaca-2-7b'
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/llama-2-7B'
 model_path = '/mnt/nfs/zsd_server/models/huggingface/llama-7b-hf_yahma'
-lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save/checkpoint-50'
-# lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
+# lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save/step_1608'
+lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 
 # instruction = "你好"
 # instruction = "hello"

@@ -24,7 +24,7 @@ DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 
 train_args = get_train_args(
-    epoch=2.0  # 0.1 for test
+    epoch=2.0  # 0.05 for test
 )
 
 lora_args = get_lora_args(
@@ -236,9 +236,10 @@ for epoch in range(starting_epoch, epoch_):
 accelerator.end_training()
 
 accelerator.wait_for_everyone()
+model.state_dict = old_state_dict
 unwrapped_model = accelerator.unwrap_model(model)
 unwrapped_model.save_pretrained(
-    SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save, safe_serialization=False,
+    SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save, safe_serialization=True,
 )
 if accelerator.is_main_process:
     tokenizer.save_pretrained(SAVE_PATH)
