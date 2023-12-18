@@ -62,6 +62,7 @@ tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
 
 # todo: add loss mask
 with accelerator.main_process_first():
+    logger.info("Start handle dataset.", main_process_only=False)
     data = load_dataset("json", data_files=DATA_PATH)  # todo: add use cache
 
     generate_and_tokenize_prompt = get_generate_and_tokenize_prompt_fn(tokenizer=tokenizer,
