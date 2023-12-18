@@ -14,7 +14,7 @@ class TrainArgs:
     learning_rate: int = 2e-5
     epoch: float = 2.0
     log_file: str = '../train.log'
-    report_to: str = 'tensorboard'  # todo: start tensorboard in python
+    report_to: str = 'tensorboard'
     save_steps: int = 50
     eval_steps: int = 50
 

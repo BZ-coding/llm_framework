@@ -11,7 +11,7 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger as accelerate_get_logger
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
-from transformers import LlamaForCausalLM, get_scheduler
+from transformers import get_scheduler, AutoModelForCausalLM
 from tqdm.auto import tqdm
 
 from utils.args import get_train_args, get_lora_args
@@ -94,7 +94,7 @@ eval_dataloader = DataLoader(data["test"],
                              num_workers=2
                              )
 
-model = LlamaForCausalLM.from_pretrained(
+model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
     # load_in_8bit=True,
     torch_dtype=torch.bfloat16,

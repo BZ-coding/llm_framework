@@ -2,7 +2,7 @@ import time
 
 import torch
 from peft import PeftModel
-from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers import LlamaForCausalLM, LlamaTokenizer, AutoTokenizer, AutoModel, AutoModelForCausalLM
 
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/chinese-alpaca-2-7b'
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/llama-2-7B'
@@ -15,12 +15,12 @@ lora_path = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 instruction = "Give me three healthy life tips."
 
 print(f"LlamaTokenizer from_pretrained start...")
-tokenizer = LlamaTokenizer.from_pretrained(model_path)
+tokenizer = AutoTokenizer.from_pretrained(model_path)
 tokenizer.pad_token_id = 0  # unk. we want this to be different from the eos token
 # tokenizer.bos_token_id = 1  # <s>
 # tokenizer.eos_token_id = 2  # </s>
 print(f"LlamaForCausalLM from_pretrained start...")
-model = LlamaForCausalLM.from_pretrained(model_path,
+model = AutoModelForCausalLM.from_pretrained(model_path,
                                          torch_dtype=torch.bfloat16,
                                          device_map='auto',
                                          # device_map='cuda',
@@ -28,7 +28,7 @@ model = LlamaForCausalLM.from_pretrained(model_path,
 model = PeftModel.from_pretrained(model=model,
                                   model_id=lora_path,
                                   device_map='auto',
-                                  # use_safetensors=True
+                                  use_safetensors=True
                                   )
 for n, p in model.named_parameters():
     if p.device.type == "meta":
