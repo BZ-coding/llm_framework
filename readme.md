@@ -10,6 +10,7 @@
 - [x] 使用transformer trainer api的lora微调脚本
 - [x] 使用pytorch+accelerator的lora微调脚本
 - [ ] loss mask
+- [ ] 模型编译
 
 -----------------------
 
