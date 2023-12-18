@@ -7,7 +7,7 @@ transformers.utils.logging.enable_default_handler()
 transformers.utils.logging.enable_explicit_format()
 
 
-def get_logger(log_level, logger_log_level=logging.INFO, logger=None, log_file=None):
+def get_logger(log_level, logger_log_level=logging.INFO, logger=None, log_file=None):  # todo: add accelerate
     if logger is None:
         logger = logging.getLogger("__main__")
     console_handler = logging.StreamHandler()
