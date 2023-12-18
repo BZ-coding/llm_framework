@@ -61,7 +61,7 @@ accelerator.wait_for_everyone()
 tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
 
 # todo: add loss mask
-with accelerator.main_process_first():
+with accelerator.main_process_first():  # add use cache
     data = load_dataset("json", data_files=DATA_PATH)
 
     generate_and_tokenize_prompt = get_generate_and_tokenize_prompt_fn(tokenizer=tokenizer,
