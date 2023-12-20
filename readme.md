@@ -22,7 +22,8 @@
 - [x] 使用transformer trainer api的lora微调脚本
 - [x] 使用pytorch+accelerator的lora微调脚本
 - [ ] loss mask
-- [ ] 推理速度
+- [ ] 推理速度（编译）
+- [ ] 推理支持stream模式
 - [ ] 模型编译
 - [ ] 模型量化
 - [ ] megatron
