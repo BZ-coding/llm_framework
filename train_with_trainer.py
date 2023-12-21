@@ -16,9 +16,12 @@ from tools.log import get_logger
 BASE_MODEL = '/mnt/nfs/zsd_server/models/huggingface/llama-7b-hf_yahma'
 DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
+project_name = 'clm_with_trainer'
 
 train_args = get_train_args(
-    epoch=0.1  # 0.1 for test
+    epoch=2.0,  # 0.05 for test
+    # save_steps=20,
+    # eval_steps=20,
 )
 
 lora_args = get_lora_args(
@@ -57,7 +60,7 @@ data_collator = transformers.DataCollatorForSeq2Seq(
     return_tensors="pt",
     padding=True,
     pad_to_multiple_of=8,
-    # pad_to_multiple_of=ARGS.max_length,
+    # pad_to_multiple_of=ARGS.max_length,  # the max_length arg is unused to padding label
 )
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -80,13 +83,6 @@ model.print_trainable_parameters()
 
 model.config.use_cache = False
 
-old_state_dict = model.state_dict
-model.state_dict = (
-    lambda self, *_, **__: get_peft_model_state_dict(
-        self, old_state_dict()
-    )
-).__get__(model, type(model))
-
 # model = torch.compile(model)
 logger.info(model)
 
@@ -108,13 +104,13 @@ training_arguments = transformers.TrainingArguments(
     save_total_limit=3,
     load_best_model_at_end=False,
     report_to=["tensorboard"],
-    logging_dir=SAVE_PATH,
+    logging_dir=os.path.join(SAVE_PATH, project_name),
     logging_steps=1,
     auto_find_batch_size=False,
     # torch_compile=True,
     do_train=True,
     overwrite_output_dir=True,
-    # save_safetensors=True,
+    save_safetensors=True,
 )
 logger.info(training_arguments)
 
@@ -131,3 +127,6 @@ trainer = transformers.Trainer(
 )
 
 trainer.train()
+
+model.save_pretrained(SAVE_PATH, safe_serialization=True)
+tokenizer.save_pretrained(SAVE_PATH)

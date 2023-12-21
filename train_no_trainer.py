@@ -22,6 +22,7 @@ from tools.log import get_logger
 BASE_MODEL = '/mnt/nfs/zsd_server/models/huggingface/llama-7b-hf_yahma'
 DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
+project_name = 'clm_no_trainer'
 
 train_args = get_train_args(
     epoch=2.0  # 0.05 for test
@@ -60,7 +61,6 @@ accelerator.wait_for_everyone()
 
 tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
 
-# todo: add loss mask
 with accelerator.main_process_first():
     logger.info("Start handle dataset.", main_process_only=False)
     data = load_dataset("json", data_files=DATA_PATH)  # todo: add use cache
@@ -156,8 +156,8 @@ model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.
 experiment_config = {}
 experiment_config.update(dataclasses.asdict(train_args))
 experiment_config.update(dataclasses.asdict(lora_args))
-experiment_config['lora_target_modules'] = str(experiment_config['lora_target_modules'])  # todo: can not has list
-accelerator.init_trackers("clm_no_trainer", experiment_config)
+experiment_config['lora_target_modules'] = str(experiment_config['lora_target_modules'])  # can not hash list
+accelerator.init_trackers(project_name, experiment_config)
 
 logger.info("***** Running training *****")
 logger.info(f"  Num examples = {len(train_dataloader)}")

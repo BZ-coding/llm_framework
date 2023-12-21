@@ -23,6 +23,15 @@
  1) Eat plenty of fruits and vegetables to get all your essential vitamins, minerals, antioxidants, fiber, and other nutrients needed for good overall wellness; 2) Exercise regularly by doing activities such as walking or running at least thirty minutes per day five days out of seven in order to keep fit and maintain optimal physical conditioning; 3) Get enough sleep every night so you can recharge both physically and mentally throughout each day.</s>
 ```
 
+### LLama-7B + LoRA(alpaca): （use loss mask）
+```
+<s> Below is an instruction that describes a task. Write a response that appropriately completes the request.
+ ### Instruction:
+ Give me three healthy life tips.
+ ### Response:
+ 1) Eat plenty of fruits and vegetables to get all your essential vitamins, minerals, antioxidants, fiber, and other nutrients needed for good overall wellness; 2) Exercise regularly by doing activities such as walking or running at least thirty minutes per day five days out of seven in order to keep fit and maintain optimal physical conditioning; 3) Get enough sleep every night so you can recharge both physically and mentally throughout each day.</s>
+```
+
 -----------------------
 
 ## 单卡
@@ -30,7 +39,7 @@
 - [x] 推理脚本
 - [x] 使用transformer trainer api的lora微调脚本
 - [x] 使用pytorch+accelerator的lora微调脚本
-- [ ] loss mask
+- [x] loss mask
 - [ ] 推理速度（编译）
 - [ ] 推理支持stream模式
 - [ ] wandb / 集中式tensorboard

@@ -27,9 +27,10 @@ def _prompt_to_token(tokenizer, prompt, response, max_length=512, add_eos_token=
         return_tensors=None,
     )
 
-    result = prompt_result
-    result["input_ids"] += response_result["input_ids"][1:]
-    result["attention_mask"] += response_result["attention_mask"][1:]
+    result = {
+        "input_ids": prompt_result["input_ids"] + response_result["input_ids"][1:],
+        "attention_mask": prompt_result["attention_mask"] + response_result["attention_mask"][1:]
+    }
     result["input_ids"] = result["input_ids"][:max_length]
     result["attention_mask"] = result["attention_mask"][:max_length]
 
@@ -38,6 +39,9 @@ def _prompt_to_token(tokenizer, prompt, response, max_length=512, add_eos_token=
         result["attention_mask"].append(1)
 
     result["labels"] = result["input_ids"].copy()
+    len_prompt = len(prompt_result["input_ids"])
+    result["labels"][:len_prompt] = [-100] * len_prompt  # -100 will be automatically ignored by PyTorch loss functions
+    result["labels"] = result["labels"][:max_length]
 
     return result
 

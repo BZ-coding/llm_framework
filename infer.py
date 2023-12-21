@@ -21,10 +21,10 @@ tokenizer.pad_token_id = 0  # unk. we want this to be different from the eos tok
 # tokenizer.eos_token_id = 2  # </s>
 print(f"LlamaForCausalLM from_pretrained start...")
 model = AutoModelForCausalLM.from_pretrained(model_path,
-                                         torch_dtype=torch.bfloat16,
-                                         device_map='auto',
-                                         # device_map='cuda',
-                                         )
+                                             torch_dtype=torch.bfloat16,
+                                             device_map='auto',
+                                             # device_map='cuda',
+                                             )
 model = PeftModel.from_pretrained(model=model,
                                   model_id=lora_path,
                                   device_map='auto',
