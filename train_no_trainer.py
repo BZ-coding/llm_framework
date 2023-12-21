@@ -125,18 +125,6 @@ model.state_dict = (
 logger.info(model)
 
 # Optimizer
-# Split weights in two groups, one with weight decay and the other not.
-# no_decay = ["bias", "layer_norm.weight"]
-# optimizer_grouped_parameters = [
-#     {
-#         "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-#         "weight_decay": 0.0,  # todo
-#     },
-#     {
-#         "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-#         "weight_decay": 0.0,
-#     },
-# ]
 optimizer = torch.optim.AdamW(model.parameters(), lr=train_args.learning_rate)
 
 num_training_steps = int(len(train_dataloader) * train_args.epoch / train_args.batch_size)

@@ -2,7 +2,7 @@ import time
 
 import torch
 from peft import PeftModel
-from transformers import LlamaForCausalLM, LlamaTokenizer, AutoTokenizer, AutoModel, AutoModelForCausalLM
+from transformers import LlamaForCausalLM, LlamaTokenizer, AutoTokenizer, AutoModel, AutoModelForCausalLM, TextStreamer
 
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/chinese-alpaca-2-7b'
 # model_path = '/mnt/nfs/zsd_server/models/huggingface/llama-2-7B'
@@ -34,6 +34,8 @@ for n, p in model.named_parameters():
     if p.device.type == "meta":
         print(f"{n} is on meta!")
 # print(model)
+
+model = torch.compile(model)
 
 prompt = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
  ### Instruction:
@@ -67,3 +69,13 @@ with torch.inference_mode():
     t1 = time.time()
     print(f"Output generated in {(t1 - t0):.2f} seconds")
     print(tokenizer.decode(generated[0]))
+
+print("\n\n\n")
+
+with torch.inference_mode():
+    print("Start Stream")
+    streamer = TextStreamer(tokenizer)
+    t0 = time.time()
+    _ = model.generate(**generate_input, streamer=streamer)
+    t1 = time.time()
+    print(f"Output generated in {(t1 - t0):.2f} seconds")
