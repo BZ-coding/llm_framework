@@ -30,6 +30,7 @@ model = PeftModel.from_pretrained(model=model,
                                   device_map='auto',
                                   use_safetensors=True
                                   )
+model = model.merge_and_unload()
 for n, p in model.named_parameters():
     if p.device.type == "meta":
         print(f"{n} is on meta!")
@@ -44,8 +45,7 @@ prompt = """Below is an instruction that describes a task. Write a response that
  """
 print(f"tokenizer start...")
 inputs = tokenizer([prompt.format(instruction=instruction)], return_tensors="pt").to('cuda')
-# inputs = tokenizer([instruction,], return_tensors="pt").to('cuda')
-# print(inputs)
+
 generate_input = {
     "input_ids": inputs.input_ids,
     "attention_mask": inputs.attention_mask,
@@ -60,17 +60,6 @@ generate_input = {
     # "bos_token_id":tokenizer.bos_token_id,
     # "pad_token_id":tokenizer.pad_token_id
 }
-
-# model.eval()
-with torch.inference_mode():
-    print("Start")
-    t0 = time.time()
-    generated = model.generate(**generate_input)
-    t1 = time.time()
-    print(f"Output generated in {(t1 - t0):.2f} seconds")
-    print(tokenizer.decode(generated[0]))
-
-print("\n\n\n")
 
 with torch.inference_mode():
     print("Start Stream")
