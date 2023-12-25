@@ -3,6 +3,8 @@ import functools
 from dataclasses import dataclass, field
 from typing import List, Union
 
+from accelerate.utils import MegatronLMPlugin
+
 
 @dataclass
 class TrainArgs:
@@ -35,3 +37,16 @@ class LoraArgs:
 @functools.lru_cache()
 def get_lora_args(**kwargs):
     return LoraArgs(**kwargs)
+
+
+# @functools.lru_cache()  # unhashable type: 'TrainArgs'
+def get_megatron_train_args(train_args: TrainArgs, **kwargs):
+    megatron_lm_plugin = MegatronLMPlugin(
+        seq_length=train_args.max_length,
+        num_micro_batches=train_args.gradient_accumulation_steps,
+        # tensorboard_dir=train_args
+        **kwargs
+    )
+    megatron_lm_plugin.set_training_args(micro_batch_size=train_args.micro_batch_size,
+                                         dp_degree=train_args.world_size)
+    return megatron_lm_plugin

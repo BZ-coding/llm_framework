@@ -14,7 +14,7 @@ from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from transformers import get_scheduler, AutoModelForCausalLM
 from tqdm.auto import tqdm
 
-from utils.args import get_train_args, get_lora_args
+from utils.args import get_train_args, get_lora_args, get_megatron_train_args
 from utils.data import get_generate_and_tokenize_prompt_fn
 from utils.tokenizer import get_tokenizer
 from tools.log import get_logger
@@ -44,11 +44,15 @@ if os.path.exists(SAVE_PATH):
     os.system(f"rm -rf {SAVE_PATH}")  # 在nfs上shutil.rmtree会报正忙、非空
 os.makedirs(SAVE_PATH, exist_ok=True)
 
+megatron_lm_plugin = get_megatron_train_args(train_args)
+print(megatron_lm_plugin)
 accelerator = Accelerator(
     gradient_accumulation_steps=train_args.gradient_accumulation_steps,
     log_with=train_args.report_to,
     project_dir=SAVE_PATH,
+    megatron_lm_plugin=megatron_lm_plugin
 )
+print(accelerator.distributed_type)
 
 log_level = logging.WARNING
 if accelerator.is_local_main_process:
