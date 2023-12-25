@@ -44,7 +44,7 @@ prompt = """Below is an instruction that describes a task. Write a response that
  ### Response:
  """
 print(f"tokenizer start...")
-inputs = tokenizer([prompt.format(instruction=instruction)], return_tensors="pt").to('cuda')
+inputs = tokenizer([prompt.format(instruction=instruction)], return_tensors="pt").to(model.device)
 
 generate_input = {
     "input_ids": inputs.input_ids,
@@ -68,3 +68,22 @@ with torch.inference_mode():
     _ = model.generate(**generate_input, streamer=streamer)
     t1 = time.time()
     print(f"Output generated in {(t1 - t0):.2f} seconds")
+
+while True:
+    with torch.inference_mode():
+        instruction = input("\n\n\nYour instruction: ('q' will quit)\n")
+        if instruction == "q":
+            exit()
+        inputs = tokenizer([prompt.format(instruction=instruction)],
+                           return_tensors="pt").to(model.device)
+        generate_input = {
+            "input_ids": inputs.input_ids,
+            "attention_mask": inputs.attention_mask,
+            "max_new_tokens": 512,
+            "do_sample": False,
+        }
+        streamer = TextStreamer(tokenizer)
+        t0 = time.time()
+        _ = model.generate(**generate_input, streamer=streamer)
+        t1 = time.time()
+        print(f"Output generated in {(t1 - t0):.2f} seconds")
