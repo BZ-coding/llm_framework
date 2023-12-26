@@ -1,0 +1,1 @@
+accelerate launch --config_file accelerate_megatron_config.yaml train_with_megatron.py

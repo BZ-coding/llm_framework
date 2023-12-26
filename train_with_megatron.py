@@ -1,3 +1,18 @@
+"""
+conda install pytorch torchvision torchaudio pytorch-cuda=12.1 cuda-toolkit cudnn -c pytorch -c nvidia
+conda install cuda-nvcc=12.1 -c pytorch -c nvidia
+conda install numpy=1.23.5
+![make `from torch._six import inf` to `from torch import inf`](https://github.com/microsoft/DeepSpeed/issues/2845)
+
+<https://huggingface.co/docs/accelerate/main/en/usage_guides/megatron_lm#prerequisites>
+
+# install apex
+pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--global-option=--cpp_ext" --config-settings "--global-option=--cuda_ext" ./
+<https://github.com/InternLM/InternLM/issues/87>
+
+# run accelerate with megatron
+accelerate launch --config_file accelerate_megatron_config.yaml train_with_megatron.py
+"""
 import dataclasses
 import os
 import shutil
@@ -5,6 +20,7 @@ import logging
 import math
 
 import torch
+from accelerate.utils import MegatronLMDummyScheduler
 from torch.utils.data import DataLoader
 import transformers
 from accelerate import Accelerator
@@ -14,7 +30,7 @@ from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from transformers import get_scheduler, AutoModelForCausalLM
 from tqdm.auto import tqdm
 
-from utils.args import get_train_args, get_lora_args
+from utils.args import get_train_args, get_lora_args, get_megatron_train_args
 from utils.data import get_generate_and_tokenize_prompt_fn
 from utils.tokenizer import get_tokenizer
 from tools.log import get_logger
@@ -30,12 +46,6 @@ train_args = get_train_args(
 
 lora_args = get_lora_args(
     lora_target_modules=(  # kwargs不能hash list
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-        "gate_proj",
-        "up_proj",
         "down_proj",
     )
 )
@@ -44,10 +54,13 @@ if os.path.exists(SAVE_PATH):
     os.system(f"rm -rf {SAVE_PATH}")  # 在nfs上shutil.rmtree会报正忙、非空
 os.makedirs(SAVE_PATH, exist_ok=True)
 
+megatron_lm_plugin = get_megatron_train_args(train_args)
+print(megatron_lm_plugin)
 accelerator = Accelerator(
     gradient_accumulation_steps=train_args.gradient_accumulation_steps,
     log_with=train_args.report_to,
     project_dir=SAVE_PATH,
+    megatron_lm_plugin=megatron_lm_plugin
 )
 print(accelerator.distributed_type)
 
@@ -99,7 +112,8 @@ model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
     # load_in_8bit=True,
     torch_dtype=torch.bfloat16,
-    device_map="cuda",  # "auto"
+    # device_map="cuda",  # "auto"
+    device_map="cpu"
 )
 
 lora_config = LoraConfig(
@@ -126,16 +140,14 @@ model.state_dict = (
 logger.info(model)
 
 # Optimizer
-optimizer = torch.optim.AdamW(model.parameters(), lr=train_args.learning_rate)
+parameters = [p for n,p in model.named_parameters() if 'lora' in n]
+# print(f"parameters:{parameters} len:{len(parameters)}")
+optimizer = torch.optim.AdamW(parameters, lr=train_args.learning_rate)
 
 num_training_steps = int(len(train_dataloader) * train_args.epoch / train_args.batch_size)
 train_args.save_steps = num_training_steps // 2
-lr_scheduler = get_scheduler(
-    name="linear",
-    optimizer=optimizer,
-    num_warmup_steps=num_training_steps * 0.1,
-    num_training_steps=num_training_steps,
-)
+lr_scheduler = MegatronLMDummyScheduler(optimizer=optimizer, total_num_steps=num_training_steps,
+                                        warmup_num_steps=int(num_training_steps * 0.1))
 
 # Prepare everything with our `accelerator`.
 model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
