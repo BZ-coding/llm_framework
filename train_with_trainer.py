@@ -22,6 +22,10 @@ train_args = get_train_args(
     epoch=2.0,  # 0.05 for test
     # save_steps=20,
     # eval_steps=20,
+    # optim=None,  # use deepspeed config
+    output_dir=SAVE_PATH,
+    report_to=["tensorboard"],
+    logging_dir=os.path.join(SAVE_PATH, project_name),
 )
 
 lora_args = get_lora_args(
@@ -41,7 +45,11 @@ if os.path.exists(SAVE_PATH):
 os.makedirs(SAVE_PATH, exist_ok=True)
 
 log_level = logging.INFO
-logger = get_logger(log_level=log_level, logger_log_level=logging.INFO, log_file=train_args.log_file)
+if torch.distributed.is_initialized():
+    log_level = logging.WARNING
+    if torch.distributed.get_rank() == 0:
+        log_level = logging.INFO
+logger = get_logger(log_level=log_level, logger_log_level=log_level, log_file=train_args.log_file)
 
 tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
 
@@ -70,49 +78,45 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="cuda",  # "auto"
 )
 
-lora_config = LoraConfig(
-    r=lora_args.lora_r,
-    lora_alpha=lora_args.lora_alpha,
-    target_modules=lora_args.lora_target_modules,
-    lora_dropout=lora_args.lora_dropout,
-    bias="none",
-    task_type="CAUSAL_LM",
-)
-model = get_peft_model(model, lora_config)
-model.print_trainable_parameters()
+if lora_args.lora_target_modules:
+    lora_config = LoraConfig(
+        r=lora_args.lora_r,
+        lora_alpha=lora_args.lora_alpha,
+        target_modules=lora_args.lora_target_modules,
+        lora_dropout=lora_args.lora_dropout,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, lora_config)
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
+    else:
+        def make_inputs_require_grad(module, input, output):
+            output.requires_grad_(True)
+        model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
+    model.print_trainable_parameters()
 
 model.config.use_cache = False
+model.gradient_checkpointing_enable()
 
 # model = torch.compile(model)
 logger.info(model)
 
 training_arguments = transformers.TrainingArguments(
-    per_device_train_batch_size=train_args.micro_batch_size,
-    gradient_accumulation_steps=train_args.gradient_accumulation_steps,
-    # warmup_steps=100,
-    warmup_ratio=0.1,
-    num_train_epochs=train_args.epoch,
-    learning_rate=train_args.learning_rate,
-    # fp16=True,
-    bf16=True,
-    optim="adamw_torch",
-    evaluation_strategy="steps",
-    eval_steps=train_args.eval_steps,
-    save_strategy="steps",
-    save_steps=train_args.save_steps,
-    output_dir=SAVE_PATH,
     save_total_limit=3,
     load_best_model_at_end=False,
-    report_to=["tensorboard"],
-    logging_dir=os.path.join(SAVE_PATH, project_name),
-    logging_steps=1,
     auto_find_batch_size=False,
-    # torch_compile=True,
     do_train=True,
     overwrite_output_dir=True,
-    save_safetensors=True,
+    # torch_compile=True,
+    # save_safetensors=True,
+
+    # deepspeed="/xxx/ds_config.json",
+
+    **train_args.get_training_args()
 )
-logger.info(training_arguments)
+if training_arguments.local_rank in [0, -1]:
+    logger.info(training_arguments)
 
 # batch = data_collator([data["train"][i] for i in range(1, 3)])
 # print(batch.keys())
