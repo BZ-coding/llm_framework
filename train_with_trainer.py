@@ -20,8 +20,8 @@ project_name = 'clm_with_trainer'
 
 train_args = get_train_args(
     epoch=2.0,  # 0.05 for test
-    # save_steps=20,
-    # eval_steps=20,
+    save_steps=50,
+    eval_steps=50,
     # optim=None,  # use deepspeed config
     output_dir=SAVE_PATH,
     report_to=["tensorboard"],
