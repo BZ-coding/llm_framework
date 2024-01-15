@@ -19,12 +19,12 @@ SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 project_name = 'clm_with_trainer'
 
 train_args = get_train_args(
-    epoch=2.0,  # 0.05 for test
+    epoch=0.05,  # 0.05 for test  # TODO: epoch控制的是样本个数，会受到bs影响到最后的step个数。要不要直接控制steps？
     save_steps=50,
     eval_steps=50,
     # optim=None,  # use deepspeed config
     output_dir=SAVE_PATH,
-    report_to=["tensorboard"],
+    report_to=("tensorboard"),  # list不能hash
     logging_dir=os.path.join(SAVE_PATH, project_name),
 )
 
@@ -74,8 +74,9 @@ data_collator = transformers.DataCollatorForSeq2Seq(
 model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
     # load_in_8bit=True,
+    # torch_dtype=torch.float16,
     torch_dtype=torch.bfloat16,
-    device_map="cuda",  # "auto"
+    # device_map="cuda",  # "auto"
 )
 
 if lora_args.lora_target_modules:

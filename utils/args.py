@@ -10,7 +10,7 @@ from accelerate.utils import MegatronLMPlugin
 class TrainArgs:
     max_length: int = 512
     micro_batch_size: int = 1
-    gradient_accumulation_steps: int = 64
+    gradient_accumulation_steps: int = 8
     world_size: int = 1
     batch_size: int = micro_batch_size * gradient_accumulation_steps * world_size
     learning_rate: int = 2e-5
