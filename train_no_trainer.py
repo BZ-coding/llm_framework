@@ -195,12 +195,12 @@ for epoch in range(starting_epoch, epoch_):
         )
         mini_batch_loss = 0
 
-        if completed_steps % train_args.save_steps == 0:
+        if train_args.save_steps and completed_steps % train_args.save_steps == 0:
             output_dir = f"step_{completed_steps}"
             output_dir = os.path.join(SAVE_PATH, output_dir)
             accelerator.save_state(output_dir)
 
-        if completed_steps % train_args.eval_steps == 0:
+        if train_args.eval_steps and completed_steps % train_args.eval_steps == 0:
             model.eval()
             losses = []
             for _, batch_ in enumerate(eval_dataloader):

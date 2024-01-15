@@ -10,7 +10,7 @@ megatron_lm_config:
   megatron_lm_recompute_activations: true
   megatron_lm_tp_degree: 1
   megatron_lm_use_distributed_optimizer: false
-mixed_precision: fp16
+mixed_precision: bf16
 num_machines: 1
 num_processes: 1
 rdzv_backend: static
