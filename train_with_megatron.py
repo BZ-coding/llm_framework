@@ -1,7 +1,7 @@
 """
 conda install pytorch torchvision torchaudio pytorch-cuda=12.1 cuda-toolkit cudnn -c pytorch -c nvidia
 conda install cuda-nvcc=12.1 -c pytorch -c nvidia
-conda install numpy=1.23.5
+conda install numpy=1.23.5 fsspec=2023.9.2 sentencepiece protobuf transformers peft
 ![make `from torch._six import inf` to `from torch import inf`](https://github.com/microsoft/DeepSpeed/issues/2845)
 
 <https://huggingface.co/docs/accelerate/main/en/usage_guides/megatron_lm#prerequisites>
