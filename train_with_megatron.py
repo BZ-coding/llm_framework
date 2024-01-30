@@ -41,11 +41,20 @@ SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 project_name = 'clm_no_trainer'
 
 train_args = get_train_args(
-    epoch=2.0  # 0.05 for test
+    epoch=0.05,  # 0.05 for test
+    gradient_accumulation_steps=8,
+    micro_batch_size=1,
+    max_length=512,
 )
 
 lora_args = get_lora_args(
     lora_target_modules=(  # kwargs不能hash list
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
         "down_proj",
     )
 )
@@ -54,7 +63,13 @@ if os.path.exists(SAVE_PATH):
     os.system(f"rm -rf {SAVE_PATH}")  # 在nfs上shutil.rmtree会报正忙、非空
 os.makedirs(SAVE_PATH, exist_ok=True)
 
-megatron_lm_plugin = train_args.get_megatron_train_args()
+megatron_lm_plugin = train_args.get_megatron_train_args(
+    other_megatron_args={
+        "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
+        "finetune": True,
+        "lora_target_modules": ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"]
+    }
+)
 print(megatron_lm_plugin)
 accelerator = Accelerator(
     gradient_accumulation_steps=train_args.gradient_accumulation_steps,
@@ -73,7 +88,7 @@ _ = get_logger(log_level=log_level, logger_log_level=logging.INFO, logger=logger
 logger.info(accelerator.state, main_process_only=False)
 accelerator.wait_for_everyone()
 
-tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
+tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL, use_fast=False)
 
 with accelerator.main_process_first():
     logger.info("Start handle dataset.", main_process_only=False)
@@ -116,33 +131,12 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="cpu"
 )
 
-if lora_args.lora_target_modules:
-    lora_config = LoraConfig(
-        r=lora_args.lora_r,
-        lora_alpha=lora_args.lora_alpha,
-        target_modules=lora_args.lora_target_modules,
-        lora_dropout=lora_args.lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    model = get_peft_model(model, lora_config)
-    if hasattr(model, "enable_input_require_grads"):
-        model.enable_input_require_grads()
-    else:
-        def make_inputs_require_grad(module, input, output):
-            output.requires_grad_(True)
-        model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
-    model.print_trainable_parameters()
+# 这里的model对megatron只提供config，所以要开lora需要在上面传参
 
 model.config.use_cache = False
 model.gradient_checkpointing_enable()
 
-old_state_dict = model.state_dict
-model.state_dict = (
-    lambda self, *_, **__: get_peft_model_state_dict(
-        self, old_state_dict()
-    )
-).__get__(model, type(model))
+logger.info(f"model.config : {model.config}")
 
 # model = torch.compile(model)
 logger.info(model)
@@ -154,14 +148,14 @@ optimizer = torch.optim.AdamW(parameters, lr=train_args.learning_rate)
 
 num_training_steps = int(len(train_dataloader) * train_args.epoch / train_args.batch_size)
 train_args.save_steps = num_training_steps // 2
-# lr_scheduler = MegatronLMDummyScheduler(optimizer=optimizer, total_num_steps=num_training_steps,
-#                                         warmup_num_steps=int(num_training_steps * 0.1))  # for accelerate launch --config_file
-lr_scheduler = get_scheduler(
-    name="linear",
-    optimizer=optimizer,
-    num_warmup_steps=num_training_steps * 0.1,
-    num_training_steps=num_training_steps,
-)
+lr_scheduler = MegatronLMDummyScheduler(optimizer=optimizer, total_num_steps=num_training_steps,
+                                        warmup_num_steps=int(num_training_steps * 0.1))  # for accelerate launch --config_file
+# lr_scheduler = get_scheduler(
+#     name="linear",
+#     optimizer=optimizer,
+#     num_warmup_steps=num_training_steps * 0.1,
+#     num_training_steps=num_training_steps,
+# )
 
 # Prepare everything with our `accelerator`.
 model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
@@ -194,7 +188,6 @@ for epoch in range(starting_epoch, epoch_):
         with accelerator.accumulate(model):
             outputs = model(**batch)
             loss = outputs.loss
-            # We keep track of the loss at each epoch
             loss_ = loss.detach().float()
             accelerator.backward(loss)
             optimizer.step()
@@ -209,7 +202,7 @@ for epoch in range(starting_epoch, epoch_):
         else:
             continue  # for accelerator's gradient_accumulation
 
-        lr = lr_scheduler.get_lr()[0]
+        lr = lr_scheduler.get_lr()
         mini_batch_loss = mini_batch_loss / train_args.gradient_accumulation_steps
         logger.info(f"step:{completed_steps} train_loss:{mini_batch_loss} learning_rate:{lr}")
         accelerator.log(
@@ -251,10 +244,10 @@ for epoch in range(starting_epoch, epoch_):
 accelerator.end_training()
 
 accelerator.wait_for_everyone()
-model.state_dict = old_state_dict
-unwrapped_model = accelerator.unwrap_model(model)
-unwrapped_model.save_pretrained(
-    SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save, safe_serialization=True,
-)
-if accelerator.is_main_process:
-    tokenizer.save_pretrained(SAVE_PATH)
+# model.state_dict = old_state_dict
+# unwrapped_model = accelerator.unwrap_model(model)
+# unwrapped_model.save_pretrained(
+#     SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save, safe_serialization=True,
+# )
+# if accelerator.is_main_process:
+#     tokenizer.save_pretrained(SAVE_PATH)
