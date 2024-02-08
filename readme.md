@@ -49,5 +49,6 @@
 -----------------------
 
 ## 单机多卡 & 多机多卡
-- [ ] megatron
-- [ ] deepspeed
+- [x] megatron
+- [x] deepspeed
+- [ ] 支持原生megatron
