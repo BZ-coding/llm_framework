@@ -15,19 +15,17 @@ accelerate launch --config_file accelerate_megatron_config.yaml train_with_megat
 """
 import dataclasses
 import os
-import shutil
 import logging
-import math
 
 import torch
-from accelerate.utils import MegatronLMDummyScheduler
+from accelerate.utils import MegatronLMDummyScheduler, MegatronLMOptimizerWrapper, MegatronLMSchedulerWrapper
 from torch.utils.data import DataLoader
 import transformers
-from accelerate import Accelerator
+from accelerate import Accelerator, DistributedType, init_empty_weights
 from accelerate.logging import get_logger as accelerate_get_logger
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
-from transformers import get_scheduler, AutoModelForCausalLM
+from transformers import get_scheduler, AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
 from tqdm.auto import tqdm
 
 from utils.args import get_train_args, get_lora_args
@@ -66,8 +64,12 @@ os.makedirs(SAVE_PATH, exist_ok=True)
 megatron_lm_plugin = train_args.get_megatron_train_args(
     other_megatron_args={
         "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
-        "finetune": True,
-        "lora_target_modules": ["query_key_value", "dense", "dense_h_to_4h", "dense_4h_to_h"]
+        "finetune": False,
+        "lora_target_modules": lora_args.lora_target_modules,
+        "recompute_granularity": "full",
+        "recompute_method": "block",
+        "recompute_num_layers": 32,  # model's config.json
+        "lr": train_args.learning_rate,
     }
 )
 print(megatron_lm_plugin)
@@ -123,44 +125,52 @@ eval_dataloader = DataLoader(data["test"],
                              num_workers=2
                              )
 
-model = AutoModelForCausalLM.from_pretrained(
-    BASE_MODEL,
-    # load_in_8bit=True,
-    torch_dtype=torch.bfloat16,
-    # device_map="cuda",  # "auto"
-    device_map="cpu"
-)
+num_training_steps = int(len(train_dataloader) * train_args.epoch / train_args.batch_size)
+accelerator.state.megatron_lm_plugin.megatron_lm_default_args["train_iters"] = num_training_steps
 
-# 这里的model对megatron只提供config，所以要开lora需要在上面传参
+if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+    # 这里的model对megatron只提供config，所以要开lora需要在上面传参
+    model_config = PretrainedConfig.from_pretrained(BASE_MODEL)
+    print(f"================================= model_config:{model_config}")
+    with init_empty_weights():
+        model = PreTrainedModel(model_config)
+else:
+    model = AutoModelForCausalLM.from_pretrained(
+        BASE_MODEL,
+        # load_in_8bit=True,
+        torch_dtype=torch.bfloat16,
+        # device_map="cuda",  # "auto"
+        # device_map="cpu"
+    )
+    model.gradient_checkpointing_enable()
 
 model.config.use_cache = False
-model.gradient_checkpointing_enable()
 
 logger.info(f"model.config : {model.config}")
 
 # model = torch.compile(model)
 logger.info(model)
 
-# Optimizer
-parameters = [p for n,p in model.named_parameters() if 'lora' in n]
-# print(f"parameters:{parameters} len:{len(parameters)}")
-optimizer = torch.optim.AdamW(parameters, lr=train_args.learning_rate)
+if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+    # 需要修改accelerator的_prepare_megatron_lm里的逻辑
+    model, train_dataloader, eval_dataloader = accelerator.prepare(
+        model, train_dataloader, eval_dataloader
+    )
+    optimizer = MegatronLMOptimizerWrapper(model.optimizer)
+    lr_scheduler = MegatronLMSchedulerWrapper(model.scheduler, model.optimizer)
 
-num_training_steps = int(len(train_dataloader) * train_args.epoch / train_args.batch_size)
-train_args.save_steps = num_training_steps // 2
-lr_scheduler = MegatronLMDummyScheduler(optimizer=optimizer, total_num_steps=num_training_steps,
-                                        warmup_num_steps=int(num_training_steps * 0.1))  # for accelerate launch --config_file
-# lr_scheduler = get_scheduler(
-#     name="linear",
-#     optimizer=optimizer,
-#     num_warmup_steps=num_training_steps * 0.1,
-#     num_training_steps=num_training_steps,
-# )
-
-# Prepare everything with our `accelerator`.
-model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
-)
+    accelerator.load_state(SAVE_PATH)
+else:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=train_args.learning_rate)
+    lr_scheduler = get_scheduler(
+        name="linear",
+        optimizer=optimizer,
+        num_warmup_steps=num_training_steps * 0.1,
+        num_training_steps=num_training_steps,
+    )
+    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    )
 
 experiment_config = {}
 experiment_config.update(dataclasses.asdict(train_args))
@@ -226,8 +236,14 @@ for epoch in range(starting_epoch, epoch_):
                 with torch.no_grad():
                     outputs = model(**batch_)
                 loss = outputs.loss
-                losses.append(accelerator.gather_for_metrics(loss.repeat(train_args.micro_batch_size)))
-            losses = torch.cat(losses)
+                if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+                    losses.append(loss)
+                else:
+                    losses.append(accelerator.gather_for_metrics(loss.repeat(train_args.batch_size)))
+            if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+                losses = torch.tensor(losses)
+            else:
+                losses = torch.cat(losses)
             eval_loss = torch.mean(losses)
             logger.info(f"step {completed_steps}: eval_loss: {eval_loss}")
             accelerator.log(
@@ -244,10 +260,13 @@ for epoch in range(starting_epoch, epoch_):
 accelerator.end_training()
 
 accelerator.wait_for_everyone()
-# model.state_dict = old_state_dict
-# unwrapped_model = accelerator.unwrap_model(model)
-# unwrapped_model.save_pretrained(
-#     SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save, safe_serialization=True,
-# )
+
+if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+    accelerator.save_state(SAVE_PATH)
+else:
+    unwrapped_model = accelerator.unwrap_model(model)
+    unwrapped_model.save_pretrained(
+        SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+    )
 # if accelerator.is_main_process:
 #     tokenizer.save_pretrained(SAVE_PATH)
