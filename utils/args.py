@@ -11,8 +11,8 @@ class TrainArgs:
     max_length: int = 512
     micro_batch_size: int = 1
     gradient_accumulation_steps: int = 8
-    world_size: int = 1
-    batch_size: int = micro_batch_size * gradient_accumulation_steps * world_size
+    dp: int = 1
+    batch_size: int = micro_batch_size * gradient_accumulation_steps * dp
     learning_rate: int = 2e-5
     epoch: float = 2.0
     log_file: str = '../train.log'
@@ -63,16 +63,14 @@ class TrainArgs:
 
         return _training_args
 
-    def get_megatron_train_args(self, **kwargs):
+    def get_megatron_train_args(self, other_megatron_args=None, **kwargs):
         megatron_lm_plugin = MegatronLMPlugin(
             seq_length=self.max_length,
             num_micro_batches=self.gradient_accumulation_steps,
-            # tensorboard_dir=train_args
+            # tensorboard_dir=train_args,
+            other_megatron_args=other_megatron_args,
             **kwargs
         )
-        megatron_lm_plugin.set_training_args(
-            micro_batch_size=self.micro_batch_size,
-            dp_degree=self.world_size)
         return megatron_lm_plugin
 
 
