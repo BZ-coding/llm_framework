@@ -1,9 +1,17 @@
 import dataclasses
 import functools
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import List, Union, Optional
 
+import torch
 from accelerate.utils import MegatronLMPlugin
+
+
+class Dtype(Enum):
+    BF16 = "bf16"
+    FP16 = "fp16"
+    FP32 = "fp32"
 
 
 @dataclass
@@ -21,15 +29,24 @@ class TrainArgs:
     eval_steps: int = 0
     warmup_steps: int = 0
     warmup_ratio: float = 0.1
-    fp16: bool = False
-    bf16: bool = True
+    dtype: Dtype = Dtype.BF16
     optim: str = "adamw_torch"
     output_dir: str = None
     logging_steps: int = 1
     logging_dir: str = None
 
     def __post_init__(self):
-        assert self.fp16 != self.bf16
+        if type(self.dtype) is str:
+            self.dtype = Dtype(self.dtype)
+        self.fp32 = False
+        self.fp16 = False
+        self.bf16 = False
+        if self.dtype == Dtype.BF16:
+            self.bf16 = True
+        elif self.dtype == Dtype.FP16:
+            self.fp16 = True
+        elif self.dtype == Dtype.FP32:
+            self.fp32 = True
 
     def get_training_args(self):
         _training_args = {
@@ -72,6 +89,14 @@ class TrainArgs:
             **kwargs
         )
         return megatron_lm_plugin
+
+    def get_torch_dtype(self):
+        if self.dtype == Dtype.BF16:
+            return torch.bfloat16
+        elif self.dtype == Dtype.FP16:
+            return torch.float16
+        elif self.dtype == Dtype.FP32:
+            return torch.float32
 
 
 @functools.lru_cache()
