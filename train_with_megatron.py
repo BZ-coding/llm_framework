@@ -24,7 +24,6 @@ import transformers
 from accelerate import Accelerator, DistributedType, init_empty_weights
 from accelerate.logging import get_logger as accelerate_get_logger
 from datasets import load_dataset
-from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from transformers import get_scheduler, AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
 from tqdm.auto import tqdm
 
@@ -43,17 +42,16 @@ train_args = get_train_args(
     gradient_accumulation_steps=8,
     micro_batch_size=1,
     max_length=512,
+    eval_steps=0,
+    dtype="bf16",
 )
 
 lora_args = get_lora_args(
     lora_target_modules=(  # kwargs不能hash list
-        "q_proj",
-        "k_proj",
-        "v_proj",
-        "o_proj",
-        "gate_proj",
-        "up_proj",
-        "down_proj",
+        "query_key_value",
+        "dense",
+        "dense_h_to_4h",
+        "dense_4h_to_h",
     )
 )
 
@@ -72,29 +70,27 @@ megatron_lm_plugin = train_args.get_megatron_train_args(
         "lr": train_args.learning_rate,
     }
 )
-print(megatron_lm_plugin)
 accelerator = Accelerator(
     gradient_accumulation_steps=train_args.gradient_accumulation_steps,
     log_with=train_args.report_to,
     project_dir=SAVE_PATH,
     megatron_lm_plugin=megatron_lm_plugin
 )
-print(accelerator.distributed_type)
 
 log_level = logging.WARNING
 if accelerator.is_local_main_process:
     log_level = logging.INFO
 logger = accelerate_get_logger(__name__)
-_ = get_logger(log_level=log_level, logger_log_level=logging.INFO, logger=logger.logger, log_file=train_args.log_file)
+_ = get_logger(log_level=log_level, logger_log_level=log_level, logger=logger.logger, log_file=train_args.log_file)
 
-logger.info(accelerator.state, main_process_only=False)
+logger.info(accelerator.state)
 accelerator.wait_for_everyone()
 
-tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL, use_fast=False)
+tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL, use_fast=False, logger=logger)
 
 with accelerator.main_process_first():
     logger.info("Start handle dataset.", main_process_only=False)
-    data = load_dataset("json", data_files=DATA_PATH)  # todo: add use cache
+    data = load_dataset("json", data_files=DATA_PATH)
 
     generate_and_tokenize_prompt = get_generate_and_tokenize_prompt_fn(tokenizer=tokenizer,
                                                                        max_length=train_args.max_length)
@@ -131,14 +127,13 @@ accelerator.state.megatron_lm_plugin.megatron_lm_default_args["train_iters"] = n
 if accelerator.distributed_type == DistributedType.MEGATRON_LM:
     # 这里的model对megatron只提供config，所以要开lora需要在上面传参
     model_config = PretrainedConfig.from_pretrained(BASE_MODEL)
-    print(f"================================= model_config:{model_config}")
     with init_empty_weights():
         model = PreTrainedModel(model_config)
 else:
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
         # load_in_8bit=True,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=train_args.get_torch_dtype(),
         # device_map="cuda",  # "auto"
         # device_map="cpu"
     )
@@ -146,10 +141,7 @@ else:
 
 model.config.use_cache = False
 
-logger.info(f"model.config : {model.config}")
-
 # model = torch.compile(model)
-logger.info(model)
 
 if accelerator.distributed_type == DistributedType.MEGATRON_LM:
     # 需要修改accelerator的_prepare_megatron_lm里的逻辑
@@ -225,9 +217,7 @@ for epoch in range(starting_epoch, epoch_):
         mini_batch_loss = 0
 
         if train_args.save_steps and completed_steps % train_args.save_steps == 0:
-            output_dir = f"step_{completed_steps}"
-            output_dir = os.path.join(SAVE_PATH, output_dir)
-            accelerator.save_state(output_dir)
+            accelerator.save_state(SAVE_PATH)
 
         if train_args.eval_steps and completed_steps % train_args.eval_steps == 0:
             model.eval()
@@ -268,5 +258,5 @@ else:
     unwrapped_model.save_pretrained(
         SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save
     )
-# if accelerator.is_main_process:
-#     tokenizer.save_pretrained(SAVE_PATH)
+if accelerator.is_main_process:
+    tokenizer.save_pretrained(SAVE_PATH)
