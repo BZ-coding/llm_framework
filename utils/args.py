@@ -20,10 +20,8 @@ class TrainArgs:
     micro_batch_size: int = 1
     gradient_accumulation_steps: int = 8
     dp: int = 1
-    batch_size: int = micro_batch_size * gradient_accumulation_steps * dp
     learning_rate: int = 2e-5
     epoch: float = 2.0
-    log_file: str = '../train.log'
     report_to: Optional[List[str]] = field(default_factory=list)
     save_steps: int = 0
     eval_steps: int = 0
@@ -36,6 +34,8 @@ class TrainArgs:
     logging_dir: str = None
 
     def __post_init__(self):
+        self.batch_size = self.micro_batch_size * self.gradient_accumulation_steps * self.dp
+
         if type(self.dtype) is str:
             self.dtype = Dtype(self.dtype)
         self.fp32 = False
