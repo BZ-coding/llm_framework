@@ -16,15 +16,16 @@ accelerate launch --config_file accelerate_megatron_config.yaml train_with_megat
 import dataclasses
 import os
 import logging
+import math
 
 import torch
-from accelerate.utils import MegatronLMDummyScheduler, MegatronLMOptimizerWrapper, MegatronLMSchedulerWrapper
+from accelerate.utils import MegatronLMOptimizerWrapper, MegatronLMSchedulerWrapper
 from torch.utils.data import DataLoader
 import transformers
 from accelerate import Accelerator, DistributedType, init_empty_weights
 from accelerate.logging import get_logger as accelerate_get_logger
 from datasets import load_dataset
-from transformers import get_scheduler, AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
+from transformers import get_scheduler, AutoModelForCausalLM, AutoConfig
 from tqdm.auto import tqdm
 
 from utils.args import get_train_args, get_lora_args
@@ -81,7 +82,7 @@ log_level = logging.WARNING
 if accelerator.is_local_main_process:
     log_level = logging.INFO
 logger = accelerate_get_logger(__name__)
-_ = get_logger(log_level=log_level, logger_log_level=log_level, logger=logger.logger, log_file=train_args.log_file)
+_ = get_logger(log_level=log_level, logger_log_level=log_level, logger=logger.logger)
 
 logger.info(accelerator.state)
 accelerator.wait_for_everyone()
@@ -121,14 +122,14 @@ eval_dataloader = DataLoader(data["test"],
                              num_workers=2
                              )
 
-num_training_steps = int(len(train_dataloader) * train_args.epoch / train_args.batch_size)
+num_training_steps = math.ceil(len(train_dataloader) * train_args.epoch / train_args.batch_size)
 accelerator.state.megatron_lm_plugin.megatron_lm_default_args["train_iters"] = num_training_steps
 
 if accelerator.distributed_type == DistributedType.MEGATRON_LM:
     # 这里的model对megatron只提供config，所以要开lora需要在上面传参
-    model_config = PretrainedConfig.from_pretrained(BASE_MODEL)
+    model_config = AutoConfig.from_pretrained(BASE_MODEL)
     with init_empty_weights():
-        model = PreTrainedModel(model_config)
+        model = AutoModelForCausalLM.from_config(model_config)
 else:
     model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL,
@@ -157,8 +158,8 @@ else:
     lr_scheduler = get_scheduler(
         name="linear",
         optimizer=optimizer,
-        num_warmup_steps=num_training_steps * 0.1,
-        num_training_steps=num_training_steps,
+        num_warmup_steps=num_training_steps * 0.1 * train_args.gradient_accumulation_steps,
+        num_training_steps=num_training_steps * train_args.gradient_accumulation_steps,
     )
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
@@ -167,26 +168,24 @@ else:
 experiment_config = {}
 experiment_config.update(dataclasses.asdict(train_args))
 experiment_config.update(dataclasses.asdict(lora_args))
-experiment_config['lora_target_modules'] = str(experiment_config['lora_target_modules'])  # can not hash list
 accelerator.init_trackers(project_name, experiment_config)
 
 logger.info("***** Running training *****")
-logger.info(f"  Num examples = {len(train_dataloader)}")
+logger.info(f"  Num examples = {num_training_steps * train_args.batch_size}")
 logger.info(f"  Num Epochs = {train_args.epoch}")
 logger.info(f"  Instantaneous batch size per device = {train_args.micro_batch_size}")
 logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {train_args.batch_size}")
 logger.info(f"  Gradient Accumulation steps = {train_args.gradient_accumulation_steps}")
-logger.info(f"  Total optimization steps = {num_training_steps}")
+logger.info(f"  Total steps = {num_training_steps}")
 # Only show the progress bar once on each machine.
 progress_bar = tqdm(range(num_training_steps), disable=not accelerator.is_local_main_process)
 completed_steps = 0
 starting_epoch = 0
 mini_batch_loss = 0
-epoch_ = int(train_args.epoch)
-epoch_ = epoch_ + 1 if train_args.epoch > epoch_ else epoch_
-for epoch in range(starting_epoch, epoch_):
+for epoch in range(starting_epoch, math.ceil(train_args.epoch)):
     model.train()
     for step, batch in enumerate(train_dataloader):
+        # TODO: skip resume steps
         with accelerator.accumulate(model):
             outputs = model(**batch)
             loss = outputs.loss
