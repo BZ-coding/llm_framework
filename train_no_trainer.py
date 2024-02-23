@@ -49,13 +49,12 @@ accelerator = Accelerator(
     log_with=train_args.report_to,
     project_dir=SAVE_PATH,
 )
-print(accelerator.distributed_type)
 
 log_level = logging.WARNING
 if accelerator.is_local_main_process:
     log_level = logging.INFO
 logger = accelerate_get_logger(__name__)
-_ = get_logger(log_level=log_level, logger_log_level=logging.INFO, logger=logger.logger, log_file=train_args.log_file)
+_ = get_logger(log_level=log_level, logger_log_level=log_level, logger=logger)
 
 logger.info(accelerator.state, main_process_only=False)
 accelerator.wait_for_everyone()

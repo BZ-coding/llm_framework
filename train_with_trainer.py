@@ -49,7 +49,7 @@ if torch.distributed.is_initialized():
     log_level = logging.WARNING
     if torch.distributed.get_rank() == 0:
         log_level = logging.INFO
-logger = get_logger(log_level=log_level, logger_log_level=log_level, log_file=train_args.log_file)
+logger = get_logger(log_level=log_level, logger_log_level=log_level)
 
 tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL)
 
