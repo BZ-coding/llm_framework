@@ -1,5 +1,3 @@
-import dataclasses
-import functools
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Union, Optional
@@ -99,19 +97,9 @@ class TrainArgs:
             return torch.float32
 
 
-@functools.lru_cache()
-def get_train_args(**kwargs):
-    return TrainArgs(**kwargs)
-
-
 @dataclass
 class LoraArgs:
     lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05
     lora_target_modules: Union[List[str], str] = field(default=None)
-
-
-@functools.lru_cache()
-def get_lora_args(**kwargs):
-    return LoraArgs(**kwargs)
