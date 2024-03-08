@@ -19,7 +19,7 @@ import logging
 import math
 
 import torch
-from accelerate.utils import MegatronLMOptimizerWrapper, MegatronLMSchedulerWrapper
+from accelerate.utils import MegatronLMOptimizerWrapper, MegatronLMSchedulerWrapper, MegatronLMDummyDataLoader
 from torch.utils.data import DataLoader
 import transformers
 from accelerate import Accelerator, DistributedType, init_empty_weights
@@ -28,7 +28,7 @@ from datasets import load_dataset
 from transformers import get_scheduler, AutoModelForCausalLM, AutoConfig
 from tqdm.auto import tqdm
 
-from utils.args import get_train_args, get_lora_args
+from utils.args import TrainArgs, LoraArgs
 from utils.data import get_generate_and_tokenize_prompt_fn
 from utils.tokenizer import get_tokenizer
 from tools.log import get_logger
@@ -36,9 +36,10 @@ from tools.log import get_logger
 BASE_MODEL = '/mnt/nfs/zsd_server/models/huggingface/llama-7b-hf_yahma'
 DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
+is_megatron_dataset = True
 project_name = 'clm_no_trainer'
 
-train_args = get_train_args(
+train_args = TrainArgs(
     epoch=0.05,  # 0.05 for test
     gradient_accumulation_steps=8,
     micro_batch_size=1,
@@ -47,7 +48,7 @@ train_args = get_train_args(
     dtype="bf16",
 )
 
-lora_args = get_lora_args(
+lora_args = LoraArgs(
     lora_target_modules=(  # kwargs不能hash list
         "query_key_value",
         "dense",
@@ -56,27 +57,41 @@ lora_args = get_lora_args(
     )
 )
 
+other_megatron_args={
+    "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
+    "finetune": False,
+    "lora_target_modules": lora_args.lora_target_modules,
+    "recompute_granularity": "full",
+    "recompute_method": "block",
+    "recompute_num_layers": 32,  # model's config.json
+    "optimizer": "adam",
+    "lr": train_args.learning_rate,
+}
+
+megatron_dataloader_config = {
+    "data_path": [DATA_PATH],
+    "splits_string": '949,50,1',
+    "seq_length": train_args.max_length,
+    "micro_batch_size": train_args.micro_batch_size,
+}
+
 if os.path.exists(SAVE_PATH):
     os.system(f"rm -rf {SAVE_PATH}")  # 在nfs上shutil.rmtree会报正忙、非空
 os.makedirs(SAVE_PATH, exist_ok=True)
 
-megatron_lm_plugin = train_args.get_megatron_train_args(
-    other_megatron_args={
-        "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
-        "finetune": False,
-        "lora_target_modules": lora_args.lora_target_modules,
-        "recompute_granularity": "full",
-        "recompute_method": "block",
-        "recompute_num_layers": 32,  # model's config.json
-        "lr": train_args.learning_rate,
-    }
-)
-accelerator = Accelerator(
-    gradient_accumulation_steps=train_args.gradient_accumulation_steps,
-    log_with=train_args.report_to,
-    project_dir=SAVE_PATH,
-    megatron_lm_plugin=megatron_lm_plugin
-)
+accelerate_kwargs = {
+    "log_with": train_args.report_to,
+    "project_dir": SAVE_PATH,
+}
+if os.environ.get("ACCELERATE_USE_MEGATRON_LM", "false") == "true":
+    # TODO: model_provider等
+    megatron_lm_plugin = train_args.get_megatron_train_args(
+        other_megatron_args=other_megatron_args,
+    )
+    accelerate_kwargs["megatron_lm_plugin"] = megatron_lm_plugin
+else:
+    accelerate_kwargs["gradient_accumulation_steps"] = train_args.gradient_accumulation_steps
+accelerator = Accelerator(**accelerate_kwargs)
 
 log_level = logging.WARNING
 if accelerator.is_local_main_process:
@@ -87,43 +102,62 @@ _ = get_logger(log_level=log_level, logger_log_level=log_level, logger=logger.lo
 logger.info(accelerator.state)
 accelerator.wait_for_everyone()
 
-tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL, use_fast=False, logger=logger)
+if is_megatron_dataset:
+    megatron_dataloader = MegatronLMDummyDataLoader(**megatron_dataloader_config)
+    train_dataloader = megatron_dataloader
+    eval_dataloader = megatron_dataloader
+    accelerator.state.megatron_lm_plugin.megatron_dataset_flag = True
+else:
+    tokenizer = get_tokenizer(tokenizer_path=BASE_MODEL, use_fast=False, logger=logger)
+    with accelerator.main_process_first():
+        logger.info("Start handle dataset.", main_process_only=False)
+        data = load_dataset("json", data_files=DATA_PATH)
+    
+        generate_and_tokenize_prompt = get_generate_and_tokenize_prompt_fn(tokenizer=tokenizer,
+                                                                           max_length=train_args.max_length)
+    
+        data = data["train"].train_test_split(test_size=200, shuffle=True, seed=42)
+        data["train"] = data["train"].map(generate_and_tokenize_prompt, remove_columns=data["train"].column_names,
+                                          num_proc=2)
+        data["test"] = data["test"].map(generate_and_tokenize_prompt, remove_columns=data["test"].column_names, num_proc=2)
+        logger.info(data)
+    
+    data_collator = transformers.DataCollatorForSeq2Seq(
+        tokenizer,
+        return_tensors="pt",
+        padding=True,
+        pad_to_multiple_of=8,
+        # pad_to_multiple_of=ARGS.max_length,
+    )
+    
+    train_dataloader = DataLoader(data["train"],
+                                  shuffle=True,
+                                  collate_fn=data_collator,
+                                  batch_size=train_args.micro_batch_size,
+                                  num_workers=2
+                                  )
+    eval_dataloader = DataLoader(data["test"],
+                                 collate_fn=data_collator,
+                                 batch_size=train_args.micro_batch_size,
+                                 num_workers=2
+                                 )
 
-with accelerator.main_process_first():
-    logger.info("Start handle dataset.", main_process_only=False)
-    data = load_dataset("json", data_files=DATA_PATH)
-
-    generate_and_tokenize_prompt = get_generate_and_tokenize_prompt_fn(tokenizer=tokenizer,
-                                                                       max_length=train_args.max_length)
-
-    data = data["train"].train_test_split(test_size=200, shuffle=True, seed=42)
-    data["train"] = data["train"].map(generate_and_tokenize_prompt, remove_columns=data["train"].column_names,
-                                      num_proc=2)
-    data["test"] = data["test"].map(generate_and_tokenize_prompt, remove_columns=data["test"].column_names, num_proc=2)
-    logger.info(data)
-
-data_collator = transformers.DataCollatorForSeq2Seq(
-    tokenizer,
-    return_tensors="pt",
-    padding=True,
-    pad_to_multiple_of=8,
-    # pad_to_multiple_of=ARGS.max_length,
-)
-
-train_dataloader = DataLoader(data["train"],
-                              shuffle=True,
-                              collate_fn=data_collator,
-                              batch_size=train_args.micro_batch_size,
-                              num_workers=2
-                              )
-eval_dataloader = DataLoader(data["test"],
-                             collate_fn=data_collator,
-                             batch_size=train_args.micro_batch_size,
-                             num_workers=2
-                             )
-
-num_training_steps = math.ceil(len(train_dataloader) * train_args.epoch / train_args.batch_size)
-accelerator.state.megatron_lm_plugin.megatron_lm_default_args["train_iters"] = num_training_steps
+# TODO: batch_size如何兼容fsdp、deepspeed、megatron获取
+if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+    if is_megatron_dataset:
+        dataloader_len = 1000
+    else:
+        dataloader_len = len(train_dataloader)
+    train_args.dp = accelerator.num_processes // (accelerator.state.megatron_lm_plugin.tp_degree * accelerator.state.megatron_lm_plugin.pp_degree)
+    train_args.batch_size = train_args.micro_batch_size * train_args.gradient_accumulation_steps * train_args.dp
+    num_training_steps = math.ceil(
+        dataloader_len * train_args.micro_batch_size * train_args.epoch / train_args.batch_size)
+    accelerator.state.megatron_lm_plugin.megatron_lm_default_args["train_iters"] = num_training_steps
+else:  # TODO: right? num_training_steps如何兼容fsdp、deepspeed、megatron获取
+    train_args.dp = accelerator.num_processes
+    train_args.batch_size = train_args.micro_batch_size * train_args.gradient_accumulation_steps * train_args.dp
+    num_training_steps = math.ceil(
+        len(train_dataloader) * train_args.micro_batch_size * train_args.epoch / (train_args.batch_size / train_args.gradient_accumulation_steps))
 
 if accelerator.distributed_type == DistributedType.MEGATRON_LM:
     # 这里的model对megatron只提供config，所以要开lora需要在上面传参
@@ -146,9 +180,14 @@ model.config.use_cache = False
 
 if accelerator.distributed_type == DistributedType.MEGATRON_LM:
     # 需要修改accelerator的_prepare_megatron_lm里的逻辑
-    model, train_dataloader, eval_dataloader = accelerator.prepare(
-        model, train_dataloader, eval_dataloader
-    )
+    if is_megatron_dataset:
+        model, train_dataloader, eval_dataloader, _ = accelerator.prepare(
+            model, train_dataloader, eval_dataloader, megatron_dataloader
+        )
+    else:
+        model, train_dataloader, eval_dataloader = accelerator.prepare(
+            model, train_dataloader, eval_dataloader
+        )
     optimizer = MegatronLMOptimizerWrapper(model.optimizer)
     lr_scheduler = MegatronLMSchedulerWrapper(model.scheduler, model.optimizer)
 
@@ -182,69 +221,75 @@ progress_bar = tqdm(range(num_training_steps), disable=not accelerator.is_local_
 completed_steps = 0
 starting_epoch = 0
 mini_batch_loss = 0
-for epoch in range(starting_epoch, math.ceil(train_args.epoch)):
-    model.train()
-    for step, batch in enumerate(train_dataloader):
-        # TODO: skip resume steps
-        with accelerator.accumulate(model):
-            outputs = model(**batch)
-            loss = outputs.loss
-            loss_ = loss.detach().float()
-            accelerator.backward(loss)
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
 
-        mini_batch_loss += loss_.item()
-        # Checks if the accelerator has performed an optimization step behind the scenes
-        if accelerator.sync_gradients:
-            progress_bar.update(1)
-            completed_steps += 1
-        else:
-            continue  # for accelerator's gradient_accumulation
+def get_patch(data_iterator):
+    if data_iterator is not None:
+        return next(data_iterator)
+    return {}
 
-        lr = lr_scheduler.get_lr()
+
+model.train()
+while completed_steps < num_training_steps:
+    # TODO: skip resume steps
+    batch = get_patch(train_dataloader)
+    with accelerator.accumulate(model):
+        outputs = model(**batch)
+        loss = outputs.loss
+        loss_ = loss.detach().float()
+        accelerator.backward(loss)
+        optimizer.step()
+        lr_scheduler.step()
+        optimizer.zero_grad()
+
+    mini_batch_loss += loss_.item()
+    # Checks if the accelerator has performed an optimization step behind the scenes
+    if accelerator.sync_gradients:
+        progress_bar.update(1)
+        completed_steps += 1
+    else:
+        continue  # for accelerator's gradient_accumulation
+
+    lr = lr_scheduler.get_lr()
+    if accelerator.distributed_type != DistributedType.MEGATRON_LM:
         mini_batch_loss = mini_batch_loss / train_args.gradient_accumulation_steps
-        logger.info(f"step:{completed_steps} train_loss:{mini_batch_loss} learning_rate:{lr}")
+    logger.info(f"step:{completed_steps}\tlm loss:{mini_batch_loss}\tlearning rate:{lr}")
+    accelerator.log(
+        {
+            "train_loss": mini_batch_loss,
+            "learning_rate": lr,
+        },
+        step=completed_steps,
+    )
+    mini_batch_loss = 0
+
+    if train_args.save_steps and completed_steps % train_args.save_steps == 0:
+        accelerator.save_state(SAVE_PATH)
+
+    if train_args.eval_steps and completed_steps % train_args.eval_steps == 0:
+        model.eval()
+        losses = []
+        for _, batch_ in enumerate(eval_dataloader):
+            with torch.no_grad():
+                outputs = model(**batch_)
+            loss = outputs.loss
+            if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+                losses.append(loss)
+            else:
+                losses.append(accelerator.gather_for_metrics(loss.repeat(train_args.batch_size)))
+        if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+            losses = torch.tensor(losses)
+        else:
+            losses = torch.cat(losses)
+        eval_loss = torch.mean(losses)
+        logger.info(f"step:{completed_steps}\teval_loss: {eval_loss}")
         accelerator.log(
             {
-                "train_loss": mini_batch_loss,
-                "learning_rate": lr,
+                "eval_loss": eval_loss,
             },
             step=completed_steps,
         )
-        mini_batch_loss = 0
+        model.train()
 
-        if train_args.save_steps and completed_steps % train_args.save_steps == 0:
-            accelerator.save_state(SAVE_PATH)
-
-        if train_args.eval_steps and completed_steps % train_args.eval_steps == 0:
-            model.eval()
-            losses = []
-            for _, batch_ in enumerate(eval_dataloader):
-                with torch.no_grad():
-                    outputs = model(**batch_)
-                loss = outputs.loss
-                if accelerator.distributed_type == DistributedType.MEGATRON_LM:
-                    losses.append(loss)
-                else:
-                    losses.append(accelerator.gather_for_metrics(loss.repeat(train_args.batch_size)))
-            if accelerator.distributed_type == DistributedType.MEGATRON_LM:
-                losses = torch.tensor(losses)
-            else:
-                losses = torch.cat(losses)
-            eval_loss = torch.mean(losses)
-            logger.info(f"step {completed_steps}: eval_loss: {eval_loss}")
-            accelerator.log(
-                {
-                    "eval_loss": eval_loss,
-                },
-                step=completed_steps,
-            )
-            model.train()
-
-        if completed_steps >= num_training_steps:
-            break
 
 accelerator.end_training()
 
@@ -257,5 +302,5 @@ else:
     unwrapped_model.save_pretrained(
         SAVE_PATH, is_main_process=accelerator.is_main_process, save_function=accelerator.save
     )
-if accelerator.is_main_process:
+if accelerator.is_main_process and not is_megatron_dataset:
     tokenizer.save_pretrained(SAVE_PATH)
