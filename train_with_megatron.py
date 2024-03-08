@@ -49,12 +49,12 @@ train_args = TrainArgs(
 )
 
 lora_args = LoraArgs(
-    lora_target_modules=(  # kwargs不能hash list
+    lora_target_modules=[
         "query_key_value",
         "dense",
         "dense_h_to_4h",
         "dense_4h_to_h",
-    )
+    ]
 )
 
 other_megatron_args={
@@ -112,16 +112,16 @@ else:
     with accelerator.main_process_first():
         logger.info("Start handle dataset.", main_process_only=False)
         data = load_dataset("json", data_files=DATA_PATH)
-    
+
         generate_and_tokenize_prompt = get_generate_and_tokenize_prompt_fn(tokenizer=tokenizer,
                                                                            max_length=train_args.max_length)
-    
+
         data = data["train"].train_test_split(test_size=200, shuffle=True, seed=42)
         data["train"] = data["train"].map(generate_and_tokenize_prompt, remove_columns=data["train"].column_names,
                                           num_proc=2)
         data["test"] = data["test"].map(generate_and_tokenize_prompt, remove_columns=data["test"].column_names, num_proc=2)
         logger.info(data)
-    
+
     data_collator = transformers.DataCollatorForSeq2Seq(
         tokenizer,
         return_tensors="pt",
@@ -221,6 +221,7 @@ progress_bar = tqdm(range(num_training_steps), disable=not accelerator.is_local_
 completed_steps = 0
 starting_epoch = 0
 mini_batch_loss = 0
+
 
 def get_patch(data_iterator):
     if data_iterator is not None:
