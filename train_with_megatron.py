@@ -57,16 +57,26 @@ lora_args = LoraArgs(
     ]
 )
 
-other_megatron_args={
-    "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
-    "finetune": False,
-    "lora_target_modules": lora_args.lora_target_modules,
-    "recompute_granularity": "full",
-    "recompute_method": "block",
-    "recompute_num_layers": 32,  # model's config.json
-    "optimizer": "adam",
-    "lr": train_args.learning_rate,
+megatron_train_args = {
+    "other_megatron_args": {
+        "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
+        "finetune": False,
+        "lora_target_modules": lora_args.lora_target_modules,
+        "recompute_granularity": "full",
+        "recompute_method": "block",
+        "recompute_num_layers": 32,  # model's config.json
+        "optimizer": "adam",
+        "lr": train_args.learning_rate,
+    }
 }
+from utils.megatron_gpt import train_valid_test_datasets_provider, get_batch as megatron_gpt_get_batch
+train_valid_test_datasets_provider.is_distributed = True
+megatron_train_args_with_megatron_dataset = {
+    "custom_megatron_datasets_provider_function": train_valid_test_datasets_provider,
+    "custom_get_batch_function": megatron_gpt_get_batch,  # 需要注意megatron的get_batch只能用于megatron的数据
+}
+if is_megatron_dataset:
+    megatron_train_args.update(megatron_train_args_with_megatron_dataset)
 
 megatron_dataloader_config = {
     "data_path": [DATA_PATH],
@@ -86,7 +96,7 @@ accelerate_kwargs = {
 if os.environ.get("ACCELERATE_USE_MEGATRON_LM", "false") == "true":
     # TODO: model_provider等
     megatron_lm_plugin = train_args.get_megatron_train_args(
-        other_megatron_args=other_megatron_args,
+        **megatron_train_args
     )
     accelerate_kwargs["megatron_lm_plugin"] = megatron_lm_plugin
 else:
@@ -232,64 +242,67 @@ def get_patch(data_iterator):
 model.train()
 while completed_steps < num_training_steps:
     # TODO: skip resume steps
-    batch = get_patch(train_dataloader)
-    with accelerator.accumulate(model):
-        outputs = model(**batch)
-        loss = outputs.loss
-        loss_ = loss.detach().float()
-        accelerator.backward(loss)
-        optimizer.step()
-        lr_scheduler.step()
-        optimizer.zero_grad()
-
-    mini_batch_loss += loss_.item()
-    # Checks if the accelerator has performed an optimization step behind the scenes
-    if accelerator.sync_gradients:
-        progress_bar.update(1)
-        completed_steps += 1
-    else:
-        continue  # for accelerator's gradient_accumulation
-
-    lr = lr_scheduler.get_lr()
-    if accelerator.distributed_type != DistributedType.MEGATRON_LM:
-        mini_batch_loss = mini_batch_loss / train_args.gradient_accumulation_steps
-    logger.info(f"step:{completed_steps}\tlm loss:{mini_batch_loss}\tlearning rate:{lr}")
-    accelerator.log(
-        {
-            "train_loss": mini_batch_loss,
-            "learning_rate": lr,
-        },
-        step=completed_steps,
-    )
-    mini_batch_loss = 0
-
-    if train_args.save_steps and completed_steps % train_args.save_steps == 0:
-        accelerator.save_state(SAVE_PATH)
-
-    if train_args.eval_steps and completed_steps % train_args.eval_steps == 0:
-        model.eval()
-        losses = []
-        for _, batch_ in enumerate(eval_dataloader):
-            with torch.no_grad():
-                outputs = model(**batch_)
+    for batch in train_dataloader:
+        with accelerator.accumulate(model):
+            outputs = model(**batch)
             loss = outputs.loss
-            if accelerator.distributed_type == DistributedType.MEGATRON_LM:
-                losses.append(loss)
-            else:
-                losses.append(accelerator.gather_for_metrics(loss.repeat(train_args.batch_size)))
-        if accelerator.distributed_type == DistributedType.MEGATRON_LM:
-            losses = torch.tensor(losses)
+            loss_ = loss.detach().float()
+            accelerator.backward(loss)
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+    
+        mini_batch_loss += loss_.item()
+        # Checks if the accelerator has performed an optimization step behind the scenes
+        if accelerator.sync_gradients:
+            progress_bar.update(1)
+            completed_steps += 1
         else:
-            losses = torch.cat(losses)
-        eval_loss = torch.mean(losses)
-        logger.info(f"step:{completed_steps}\teval_loss: {eval_loss}")
+            continue  # for accelerator's gradient_accumulation
+    
+        lr = lr_scheduler.get_lr()
+        if accelerator.distributed_type != DistributedType.MEGATRON_LM:
+            mini_batch_loss = mini_batch_loss / train_args.gradient_accumulation_steps
+        logger.info(f"step:{completed_steps}\tlm loss:{mini_batch_loss}\tlearning rate:{lr}")
         accelerator.log(
             {
-                "eval_loss": eval_loss,
+                "train_loss": mini_batch_loss,
+                "learning_rate": lr,
             },
             step=completed_steps,
         )
-        model.train()
+        mini_batch_loss = 0
+    
+        if train_args.save_steps and completed_steps % train_args.save_steps == 0:
+            accelerator.save_state(SAVE_PATH)
+    
+        if train_args.eval_steps and completed_steps % train_args.eval_steps == 0:
+            model.eval()
+            losses = []
+            for _, batch_ in enumerate(eval_dataloader):
+                with torch.no_grad():
+                    outputs = model(**batch_)
+                loss = outputs.loss
+                if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+                    losses.append(loss)
+                else:
+                    losses.append(accelerator.gather_for_metrics(loss.repeat(train_args.batch_size)))
+            if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+                losses = torch.tensor(losses)
+            else:
+                losses = torch.cat(losses)
+            eval_loss = torch.mean(losses)
+            logger.info(f"step:{completed_steps}\teval_loss: {eval_loss}")
+            accelerator.log(
+                {
+                    "eval_loss": eval_loss,
+                },
+                step=completed_steps,
+            )
+            model.train()
+
+        if completed_steps >= num_training_steps:
+            break
 
 
 accelerator.end_training()
