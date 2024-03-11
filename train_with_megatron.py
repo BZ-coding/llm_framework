@@ -31,12 +31,13 @@ from tqdm.auto import tqdm
 from utils.args import TrainArgs, LoraArgs
 from utils.data import get_generate_and_tokenize_prompt_fn
 from utils.tokenizer import get_tokenizer
+import utils.megatron_model_config
 from tools.log import get_logger
 
 BASE_MODEL = '/mnt/nfs/zsd_server/models/huggingface/llama-7b-hf_yahma'
 DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
-is_megatron_dataset = True
+is_megatron_dataset = False
 project_name = 'clm_no_trainer'
 
 train_args = TrainArgs(
@@ -231,12 +232,6 @@ progress_bar = tqdm(range(num_training_steps), disable=not accelerator.is_local_
 completed_steps = 0
 starting_epoch = 0
 mini_batch_loss = 0
-
-
-def get_patch(data_iterator):
-    if data_iterator is not None:
-        return next(data_iterator)
-    return {}
 
 
 model.train()
