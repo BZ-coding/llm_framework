@@ -18,7 +18,6 @@ import os
 import logging
 import math
 
-
 import torch
 from accelerate.utils import MegatronLMOptimizerWrapper, MegatronLMSchedulerWrapper, MegatronLMDummyDataLoader
 from torch.utils.data import DataLoader
@@ -42,12 +41,12 @@ is_megatron_dataset = False
 project_name = 'clm_no_trainer'
 
 train_args = TrainArgs(
-    epoch=0.05,  # 0.05 for test
+    epoch=2,  # 0.008 for test
     gradient_accumulation_steps=8,
-    micro_batch_size=1,
-    max_length=512,
+    micro_batch_size=4,
+    max_length=1024,
     eval_steps=0,
-    dtype="bf16",
+    dtype="bf16",  # TODO: 修改环境变量？还是以配置文件里的为准？
 )
 
 lora_args = LoraArgs(
@@ -63,7 +62,7 @@ megatron_train_args = {
     "other_megatron_args": {
         "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
         "finetune": False,
-        "lora_target_modules": lora_args.lora_target_modules,
+        # "lora_target_modules": lora_args.lora_target_modules,
         "recompute_granularity": "full",
         "recompute_method": "block",
         "recompute_num_layers": 32,  # model's config.json
@@ -71,11 +70,13 @@ megatron_train_args = {
         "lr": train_args.learning_rate,
     }
 }
-from utils.megatron_gpt import train_valid_test_datasets_provider, get_batch as megatron_gpt_get_batch
+from utils.megatron_gpt import train_valid_test_datasets_provider, get_batch as megatron_gpt_get_batch, \
+    model_provider as megatron_gpt_model_provider
 train_valid_test_datasets_provider.is_distributed = True
 megatron_train_args_with_megatron_dataset = {
     "custom_megatron_datasets_provider_function": train_valid_test_datasets_provider,
     "custom_get_batch_function": megatron_gpt_get_batch,  # 需要注意megatron的get_batch只能用于megatron的数据
+    "custom_model_provider_function": megatron_gpt_model_provider,
 }
 if is_megatron_dataset:
     megatron_train_args.update(megatron_train_args_with_megatron_dataset)
@@ -85,6 +86,13 @@ megatron_dataloader_config = {
     "splits_string": '949,50,1',
     "seq_length": train_args.max_length,
     "micro_batch_size": train_args.micro_batch_size,
+}
+
+transformer_dataloader_config = {
+    "return_tensors": "pt",
+    "padding": True,
+    "pad_to_multiple_of": 8,
+    # "pad_to_multiple_of": train_args.max_length,
 }
 
 if os.path.exists(SAVE_PATH):
@@ -136,12 +144,9 @@ else:
 
     data_collator = transformers.DataCollatorForSeq2Seq(
         tokenizer,
-        return_tensors="pt",
-        padding=True,
-        pad_to_multiple_of=8,
-        # pad_to_multiple_of=ARGS.max_length,
+        **transformer_dataloader_config
     )
-    
+
     train_dataloader = DataLoader(data["train"],
                                   shuffle=True,
                                   collate_fn=data_collator,
@@ -191,6 +196,8 @@ model.config.use_cache = False
 # model = torch.compile(model)
 
 if accelerator.distributed_type == DistributedType.MEGATRON_LM:
+    # TODO：自定义model（model_preovider）、optimizer和lr_scheduler
+    # TODO：可否使用megatron格式的模型，即没有hf的config文件？
     # 需要修改accelerator的_prepare_megatron_lm里的逻辑
     if is_megatron_dataset:
         model, train_dataloader, eval_dataloader, _ = accelerator.prepare(
@@ -247,7 +254,6 @@ while completed_steps < num_training_steps:
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
-    
         mini_batch_loss += loss_.item()
         # Checks if the accelerator has performed an optimization step behind the scenes
         if accelerator.sync_gradients:
@@ -255,7 +261,6 @@ while completed_steps < num_training_steps:
             completed_steps += 1
         else:
             continue  # for accelerator's gradient_accumulation
-    
         lr = lr_scheduler.get_lr()
         if accelerator.distributed_type != DistributedType.MEGATRON_LM:
             mini_batch_loss = mini_batch_loss / train_args.gradient_accumulation_steps
@@ -268,10 +273,10 @@ while completed_steps < num_training_steps:
             step=completed_steps,
         )
         mini_batch_loss = 0
-    
+
         if train_args.save_steps and completed_steps % train_args.save_steps == 0:
             accelerator.save_state(SAVE_PATH)
-    
+
         if train_args.eval_steps and completed_steps % train_args.eval_steps == 0:
             model.eval()
             losses = []
