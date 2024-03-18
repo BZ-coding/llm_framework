@@ -41,12 +41,12 @@ is_megatron_dataset = False
 project_name = 'clm_no_trainer'
 
 train_args = TrainArgs(
-    epoch=2,  # 0.008 for test
+    epoch=0.05,  # 0.05 for test
     gradient_accumulation_steps=8,
-    micro_batch_size=4,
-    max_length=1024,
+    micro_batch_size=1,
+    max_length=512,
     eval_steps=0,
-    dtype="bf16",  # TODO: 修改环境变量？还是以配置文件里的为准？
+    dtype="bf16",
 )
 
 lora_args = LoraArgs(
@@ -62,7 +62,7 @@ megatron_train_args = {
     "other_megatron_args": {
         "tokenizer_model": os.path.join(BASE_MODEL, "tokenizer.model"),
         "finetune": False,
-        # "lora_target_modules": lora_args.lora_target_modules,
+        "lora_target_modules": lora_args.lora_target_modules,
         "recompute_granularity": "full",
         "recompute_method": "block",
         "recompute_num_layers": 32,  # model's config.json
