@@ -8,7 +8,7 @@ from datasets import load_dataset
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from transformers import AutoModelForCausalLM
 
-from utils.args import get_train_args, get_lora_args
+from utils.args import TrainArgs, LoraArgs
 from utils.data import get_generate_and_tokenize_prompt_fn
 from utils.tokenizer import get_tokenizer
 from tools.log import get_logger
@@ -18,7 +18,7 @@ DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 project_name = 'clm_with_trainer'
 
-train_args = get_train_args(
+train_args = TrainArgs(
     epoch=0.05,  # 0.05 for test  # TODO: epoch控制的是样本个数，会受到bs影响到最后的step个数。要不要直接控制steps？
     save_steps=50,
     eval_steps=50,
@@ -28,8 +28,8 @@ train_args = get_train_args(
     logging_dir=os.path.join(SAVE_PATH, project_name),
 )
 
-lora_args = get_lora_args(
-    lora_target_modules=(  # kwargs不能hash list
+lora_args = LoraArgs(
+    lora_target_modules=[
         "q_proj",
         "k_proj",
         "v_proj",
@@ -37,7 +37,7 @@ lora_args = get_lora_args(
         "gate_proj",
         "up_proj",
         "down_proj",
-    )
+    ]
 )
 
 if os.path.exists(SAVE_PATH):

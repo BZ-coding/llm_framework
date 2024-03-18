@@ -14,7 +14,7 @@ from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
 from transformers import get_scheduler, AutoModelForCausalLM
 from tqdm.auto import tqdm
 
-from utils.args import get_train_args, get_lora_args
+from utils.args import TrainArgs, LoraArgs
 from utils.data import get_generate_and_tokenize_prompt_fn
 from utils.tokenizer import get_tokenizer
 from tools.log import get_logger
@@ -24,12 +24,12 @@ DATA_PATH = '/mnt/nfs/zsd_server/data/origin/alpaca_data_cleaned_archive.json'
 SAVE_PATH = '/mnt/nfs/zsd_server/models/my/llama-7b_save'
 project_name = 'clm_no_trainer'
 
-train_args = get_train_args(
+train_args = TrainArgs(
     epoch=2.0  # 0.05 for test
 )
 
-lora_args = get_lora_args(
-    lora_target_modules=(  # kwargs不能hash list
+lora_args = LoraArgs(
+    lora_target_modules=[
         "q_proj",
         "k_proj",
         "v_proj",
@@ -37,7 +37,7 @@ lora_args = get_lora_args(
         "gate_proj",
         "up_proj",
         "down_proj",
-    )
+    ]
 )
 
 if os.path.exists(SAVE_PATH):
