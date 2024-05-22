@@ -52,3 +52,10 @@
 - [x] megatron
 - [x] deepspeed
 - [ ] 支持原生megatron
+
+-----------------------
+
+## docker
+```shell
+sudo docker run --rm -i -t --runtime=nvidia --gpus all nvcr.io/nvidia/pytorch:24.04-py3 bash
+```
