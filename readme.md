@@ -58,4 +58,6 @@
 ## docker
 ```shell
 sudo docker run --rm -i -t --runtime=nvidia --gpus all nvcr.io/nvidia/pytorch:24.04-py3 bash
+
+sudo docker exec -it gpu_env bash
 ```
